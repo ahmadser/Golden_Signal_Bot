@@ -1,5 +1,5 @@
 pandas
-pandas_ta==0.3.14b0
+pandas_ta
 yfinance
 requests
 flask
