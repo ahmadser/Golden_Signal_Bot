@@ -76,4 +76,5 @@ if __name__ == "__main__":
     send_telegram_msg("🛠 *تم تحديث المنصة:* رادار البيناري الاحترافي قيد التشغيل!")
     while True:
         check_market()
+        send_telegram_msg("🔄 الرادار فحص جميع الأزواج الآن.. بانتظار فرصة حقيقية.")
         time.sleep(60) # فحص كل دقيقة
