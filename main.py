@@ -6,13 +6,16 @@ import os
 from flask import Flask
 from threading import Thread
 
-# إعداد سيرفر وهمي لإبقاء البوت مستيقظاً
+# إعداد السيرفر ليتوافق مع Render تلقائياً
 app = Flask('')
+
 @app.route('/')
-def home(): return "الرادار يعمل بكفاءة يا أبو جواد!"
+def home():
+    return "الرادار يعمل بكفاءة يا أبو جواد!"
 
 def run():
-    port = int(os.environ.get("PORT", 8080))
+    # هذا السطر هو السر: يبحث عن المنفذ المطلوب أو يستخدم 10000 كاحتياطي
+    port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
 # بيانات التلجرام
@@ -21,12 +24,13 @@ CHAT_ID = "8453156230"
 
 def send_msg(text):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    try: requests.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=10)
-    except: pass
+    try:
+        requests.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=10)
+    except:
+        pass
 
 def check_market():
     assets = ["GC=F", "EURUSD=X", "GBPUSD=X"]
-    # جلسة "تخفي" لتجنب حظر ياهو
     session = requests.Session()
     session.headers.update({'User-Agent': 'Mozilla/5.0'})
     
@@ -47,17 +51,17 @@ def check_market():
                 send_msg(f"🔔 *إشارة شراء* ⬆️\n💹 `{asset}`\n💰 السعر: `{price:.5f}`")
             elif price >= upper and rsi_val > 65:
                 send_msg(f"🔔 *إشارة بيع* ⬇️\n💹 `{asset}`\n💰 السعر: `{price:.5f}`")
-        except: continue
+        except:
+            continue
 
 def main_loop():
     while True:
         check_market()
-        # تقليل الفحص لمرة كل دقيقتين لتجنب الحظر تماماً
         time.sleep(120)
 
 if __name__ == "__main__":
-    # تشغيل السيرفر في خلفية منفصلة
+    # تشغيل Flask أولاً ليرى Render أن المنفذ مفتوح
     Thread(target=run).start()
     time.sleep(5)
-    send_msg("🚀 *أبشر يا أبو جواد.. الرادار انطلق مجدداً!*")
+    send_msg("🚀 *الرادار استيقظ الآن بنظام المنفذ التلقائي!*")
     main_loop()
