@@ -6,71 +6,58 @@ import os
 from flask import Flask
 from threading import Thread
 
-# --- إعدادات السيرفر لضمان عدم الإغلاق ---
+# إعداد سيرفر وهمي لإبقاء البوت مستيقظاً
 app = Flask('')
 @app.route('/')
-def home(): return "الرادار يعمل بنجاح!"
+def home(): return "الرادار يعمل بكفاءة يا أبو جواد!"
 
 def run():
-    # استخدام المنفذ الذي يطلبه Render تلقائياً
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
-
-# --- بيانات التلجرام ---
+# بيانات التلجرام
 TOKEN = "8203171259:AAEHyC3hnxnbkIW8G3FxlWLDTyC6stiQSHY"
 CHAT_ID = "8453156230"
 
-def send_telegram_msg(message):
+def send_msg(text):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    try:
-        r = requests.post(url, json=payload, timeout=10)
-        return r.json()
-    except: return None
+    try: requests.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=10)
+    except: pass
 
 def check_market():
-    # الذهب وأهم العملات
-    pairs = ["GC=F", "EURUSD=X", "GBPUSD=X", "JPY=X", "GBPJPY=X"]
-    for pair in pairs:
+    assets = ["GC=F", "EURUSD=X", "GBPUSD=X"]
+    # جلسة "تخفي" لتجنب حظر ياهو
+    session = requests.Session()
+    session.headers.update({'User-Agent': 'Mozilla/5.0'})
+    
+    for asset in assets:
         try:
-            time.sleep(5) 
-            data = yf.download(pair, period="1d", interval="1m", progress=False)
-            if data.empty: continue
-            
-            # التحليل الفني
-            bb = ta.bbands(data['Close'], length=20, std=2)
-            rsi = ta.rsi(data['Close'], length=14)
-            stoch = ta.stoch(data['High'], data['Low'], data['Close'])
-            
-            last_price = data['Close'].iloc[-1]
-            last_rsi = rsi.iloc[-1]
-            last_stoch = stoch['STOCHk_14_3_3'].iloc[-1]
-            upper_bb = bb['BBU_20_2.0'].iloc[-1]
-            lower_bb = bb['BBL_20_2.0'].iloc[-1]
+            df = yf.download(asset, period="1d", interval="1m", session=session, progress=False)
+            if df.empty or len(df) < 20: continue
 
-            # شروط الصيد (ألوان وأسهم كما طلبت)
-            if last_price <= lower_bb and last_rsi < 30:
-                msg = f"💎 *فرصة ذهبية (شراء) ⬆️*\n💹 الزوج: `{pair}`\n💰 السعر: `{last_price:.5f}`\n🟢 الاتجاه: *صعود*\n⏱ المدة: `5 دقائق`"
-                send_telegram_msg(msg)
-            elif last_price >= upper_bb and last_rsi > 70:
-                msg = f"💎 *فرصة ذهبية (بيع) ⬇️*\n💹 الزوج: `{pair}`\n💰 السعر: `{last_price:.5f}`\n🔴 الاتجاه: *هبوط*\n⏱ المدة: `5 دقائق`"
-                send_telegram_msg(msg)
+            bb = ta.bbands(df['Close'], length=20, std=2)
+            rsi = ta.rsi(df['Close'], length=14)
+            
+            price = df['Close'].iloc[-1]
+            lower = bb['BBL_20_2.0'].iloc[-1]
+            upper = bb['BBU_20_2.0'].iloc[-1]
+            rsi_val = rsi.iloc[-1]
+
+            if price <= lower and rsi_val < 35:
+                send_msg(f"🔔 *إشارة شراء* ⬆️\n💹 `{asset}`\n💰 السعر: `{price:.5f}`")
+            elif price >= upper and rsi_val > 65:
+                send_msg(f"🔔 *إشارة بيع* ⬇️\n💹 `{asset}`\n💰 السعر: `{price:.5f}`")
         except: continue
 
-if __name__ == "__main__":
-    # 1. تشغيل السيرفر في الخلفية
-    keep_alive()
-    
-    # 2. إرسال رسالة ترحيب فورية لكسر الصمت
-    time.sleep(2)
-    print("إرسال رسالة التفعيل...")
-    send_telegram_msg("🚀 *تم تفعيل الرادار يا أبو جواد!*\nالنظام الآن يراقب الذهب والعملات بدقة.")
-    
-    # 3. حلقة الفحص المستمر
+def main_loop():
     while True:
         check_market()
-        time.sleep(60)
+        # تقليل الفحص لمرة كل دقيقتين لتجنب الحظر تماماً
+        time.sleep(120)
+
+if __name__ == "__main__":
+    # تشغيل السيرفر في خلفية منفصلة
+    Thread(target=run).start()
+    time.sleep(5)
+    send_msg("🚀 *أبشر يا أبو جواد.. الرادار انطلق مجدداً!*")
+    main_loop()
