@@ -16,7 +16,7 @@ def run():
     app.run(host='0.0.0.0', port=port)
 
 # بيانات البوت الجديدة من صورك
-TOKEN = "8203171259:AAEHyC3hnxnbkIW8G3FxlWLDTyC6stiQSHY"
+TOKEN = "8571032199:AAHCoP13fVQJ5lkFC0BVZBdnsBp6I5Tw7n4"
 CHAT_ID = "8453156230"
 
 def send_telegram_msg(text):
