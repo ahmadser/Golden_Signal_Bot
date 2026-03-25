@@ -2,66 +2,75 @@ import pandas_ta as ta
 import yfinance as yf
 import requests
 import time
-import pandas as pd
+import os
 from flask import Flask
 from threading import Thread
 
+# --- إعدادات السيرفر لضمان عدم الإغلاق ---
 app = Flask('')
 @app.route('/')
-def home(): return "رادار أبو جواد - وضع الأمان مفعل"
+def home(): return "الرادار يعمل بنجاح!"
 
-def run(): app.run(host='0.0.0.0', port=8080)
-def keep_alive(): Thread(target=run).start()
+def run():
+    # استخدام المنفذ الذي يطلبه Render تلقائياً
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
 
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+
+# --- بيانات التلجرام ---
 TOKEN = "8203171259:AAEHyC3hnxnbkIW8G3FxlWLDTyC6stiQSHY"
 CHAT_ID = "8453156230"
 
 def send_telegram_msg(message):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    try: requests.post(url, json={"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}, timeout=10)
-    except: pass
+    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    try:
+        r = requests.post(url, json=payload, timeout=10)
+        return r.json()
+    except: return None
 
 def check_market():
-    # تقليل القائمة لضمان عدم الحظر (الذهب + أهم 4 عملات)
+    # الذهب وأهم العملات
     pairs = ["GC=F", "EURUSD=X", "GBPUSD=X", "JPY=X", "GBPJPY=X"]
-    
     for pair in pairs:
         try:
-            # زيادة الفاصل الزمني بين كل عملة وأخرى لـ 5 ثوانٍ (للأمان القصوى)
             time.sleep(5) 
+            data = yf.download(pair, period="1d", interval="1m", progress=False)
+            if data.empty: continue
             
-            # جلب البيانات
-            ticker = yf.Ticker(pair)
-            df = ticker.history(period="1d", interval="1m")
+            # التحليل الفني
+            bb = ta.bbands(data['Close'], length=20, std=2)
+            rsi = ta.rsi(data['Close'], length=14)
+            stoch = ta.stoch(data['High'], data['Low'], data['Close'])
             
-            if df.empty or len(df) < 20: continue
-            
-            # حساب المؤشرات
-            bb = ta.bbands(df['Close'], length=20, std=2)
-            stoch = ta.stoch(df['High'], df['Low'], df['Close'], k=14, d=3)
-            rsi = ta.rsi(df['Close'], length=14)
-            df = pd.concat([df, bb, stoch, rsi], axis=1)
-            last = df.iloc[-1]
+            last_price = data['Close'].iloc[-1]
+            last_rsi = rsi.iloc[-1]
+            last_stoch = stoch['STOCHk_14_3_3'].iloc[-1]
+            upper_bb = bb['BBU_20_2.0'].iloc[-1]
+            lower_bb = bb['BBL_20_2.0'].iloc[-1]
 
-            price = round(float(last['Close']), 5)
-            bb_l, bb_u = float(last['BBL_20_2.0']), float(last['BBU_20_2.0'])
-            stoch_k = float(last['STOCHk_14_3_3'])
-            rsi_v = float(last['RSI_14'])
-
-            # شروط الخيارات الثنائية القوية
-            if price <= bb_l and stoch_k < 20 and rsi_v < 35:
-                send_telegram_msg(f"💎 *فرصة ذهبية (شراء) ⬆️*\n💹 `{pair}`\n💰 السعر: `{price}`\n⏱ المدة: `5 دقائق`")
-            elif price >= bb_u and stoch_k > 80 and rsi_v > 65:
-                send_telegram_msg(f"💎 *فرصة ذهبية (بيع) ⬇️*\n💹 `{pair}`\n💰 السعر: `{price}`\n⏱ المدة: `5 دقائق`")
-
-        except Exception as e:
-            print(f"Error in {pair}: {e}")
-            continue
+            # شروط الصيد (ألوان وأسهم كما طلبت)
+            if last_price <= lower_bb and last_rsi < 30:
+                msg = f"💎 *فرصة ذهبية (شراء) ⬆️*\n💹 الزوج: `{pair}`\n💰 السعر: `{last_price:.5f}`\n🟢 الاتجاه: *صعود*\n⏱ المدة: `5 دقائق`"
+                send_telegram_msg(msg)
+            elif last_price >= upper_bb and last_rsi > 70:
+                msg = f"💎 *فرصة ذهبية (بيع) ⬇️*\n💹 الزوج: `{pair}`\n💰 السعر: `{last_price:.5f}`\n🔴 الاتجاه: *هبوط*\n⏱ المدة: `5 دقائق`"
+                send_telegram_msg(msg)
+        except: continue
 
 if __name__ == "__main__":
+    # 1. تشغيل السيرفر في الخلفية
     keep_alive()
-    # رسالة فورية للتأكد من التلجرام
-    send_telegram_msg("🚀 *تم تفعيل وضع الأمان القصوى!*\nجاري فحص الذهب والعملات الرئيسية الآن...")
+    
+    # 2. إرسال رسالة ترحيب فورية لكسر الصمت
+    time.sleep(2)
+    print("إرسال رسالة التفعيل...")
+    send_telegram_msg("🚀 *تم تفعيل الرادار يا أبو جواد!*\nالنظام الآن يراقب الذهب والعملات بدقة.")
+    
+    # 3. حلقة الفحص المستمر
     while True:
         check_market()
-        time.sleep(120) # فحص كل دقيقتين لضمان عدم الحظر مجدداً
+        time.sleep(60)
