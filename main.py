@@ -1,32 +1,30 @@
 import os, telebot, yfinance as yf, pandas as pd, pandas_ta as ta
 from datetime import datetime
-import time, threading, os
+import time, threading
 from flask import Flask
 
-# 🔑 الإعدادات
+# 🔑 الإعدادات (ثابتة)
 TOKEN = "8571032199:AAHCoP13fVQJ5lkFC0BVZBdnSBp6I5Tw7n4"
 CHAT_ID = "8453156230"
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# 📊 تقليل القائمة لتركيز القوة وتجنب الحظر (أهم 6 أصول)
+# 📊 الـ 12 زوج فما فوق (العملات، الذهب، الكريبتو)
 ASSETS = {
-    "الذهب 🟡": "GC=F", "البيتكوين ₿": "BTC-USD",
-    "EUR/USD": "EURUSD=X", "GBP/USD": "GBPUSD=X",
-    "USD/JPY": "JPY=X", "EUR/JPY": "EURJPY=X"
+    "EUR/USD": "EURUSD=X", "GBP/USD": "GBPUSD=X", "USD/JPY": "JPY=X",
+    "AUD/USD": "AUDUSD=X", "USD/CAD": "CAD=X", "EUR/JPY": "EURJPY=X",
+    "GBP/JPY": "GBPJPY=X", "NZD/USD": "NZDUSD=X", "USD/CHF": "CHF=X",
+    "EUR/GBP": "EURGBP=X", "الذهب 🟡": "GC=F", "البيتكوين ₿": "BTC-USD"
 }
 
 def analyze_market():
     while True:
-        print(f"🔄 فحص جديد: {datetime.now().strftime('%H:%M:%S')}")
+        print(f"🔄 جولة فحص شاملة: {datetime.now().strftime('%H:%M:%S')}")
         for name, ticker in ASSETS.items():
             try:
-                # محاولة جلب البيانات مع "تكرار" في حال الفشل
-                data = yf.Ticker(ticker)
-                df = data.history(period="1d", interval="5m")
-                
-                if df.empty or len(df) < 30:
-                    print(f"⚠️ {name}: لا توجد بيانات حالياً.")
+                # سحب بيانات 5 دقائق (أحدث 40 شمعة للفلترة)
+                df = yf.download(ticker, period="1d", interval="5m", progress=False)
+                if df is None or df.empty or len(df) < 40:
                     continue
 
                 # حساب المؤشرات (الاستراتيجيات الـ 9 مدمجة)
@@ -34,43 +32,97 @@ def analyze_market():
                 bbands = ta.bbands(df['Close'], length=20, std=2)
                 df['EMA_5'] = ta.ema(df['Close'], length=5)
                 df['EMA_13'] = ta.ema(df['Close'], length=13)
-                df['EMA_200'] = ta.ema(df['Close'], length=200)
-                df['CCI'] = ta.cci(df['High'], df['Low'], df['Close'], length=20)
+                df['EMA_200'] = ta.ema(df['Close'], length=200) # للاتجاه العام
+                df['CCI'] = ta.cci(df['High'], df['Low'], df['Close'], length=20) # للزخم
                 
+                # فحص وجود بيانات الاستوكاستك قبل الاستخدام
+                stoch = ta.stoch(df['High'], df['Low'], df['Close'])
+                if stoch is not None and not stoch.empty:
+                    df['STOCHk'] = stoch['STOCHk_14_3_3']
+                else:
+                    df['STOCHk'] = 50 # قيمة محايدة
+
                 last = df.iloc[-1]
                 prev = df.iloc[-2]
-                price = round(float(last['Close']), 5)
-                signal = None
-
-                # 1. القناص (SNIPER) - جعلناها أكثر حساسية
-                if price < last['EMA_200'] and last['RSI'] < 40: signal = "SNIPER_BUY"
-                elif price > last['EMA_200'] and last['RSI'] > 60: signal = "SNIPER_SELL"
+                last_price = round(float(last['Close']), 5)
                 
-                # 2. الزخم (MOMENTUM)
-                elif last['CCI'] > 100: signal = "MOMENTUM_BUY"
-                elif last['CCI'] < -100: signal = "MOMENTUM_SELL"
+                signal_type = None
 
-                if signal:
-                    send_signal(name, price, signal)
+                # 1️⃣ استراتيجية: الفرصة الذهبية (RSI + BB + Stoch)
+                if last['RSI'] < 30 and last_price < bbands['BBL_20_2.0'].iloc[-1] and last['STOCHk'] < 20:
+                    signal_type = "GOLDEN_BUY"
+                elif last['RSI'] > 70 and last_price > bbands['BBU_20_2.0'].iloc[-1] and last['STOCHk'] > 80:
+                    signal_type = "GOLDEN_SELL"
                 
-                # 💡 زيادة وقت الانتظار بين العملات لتجنب الحظر
-                time.sleep(15) 
-            except Exception as e:
-                print(f"❌ خطأ في {name}: {e}")
-                time.sleep(30) # انتظار طويل في حال الخطأ
+                # 2️⃣ استراتيجية: الفرصة القوية (EMA Cross)
+                elif last['EMA_5'] > last['EMA_13'] and prev['EMA_5'] <= prev['EMA_13']:
+                    signal_type = "STRONG_BUY"
+                elif last['EMA_5'] < last['EMA_13'] and prev['EMA_5'] >= prev['EMA_13']:
+                    signal_type = "STRONG_SELL"
+
+                # 3️⃣ استراتيجية: صيد القناص (SNIPER)
+                elif last_price < last['EMA_200'] and last['RSI'] < 35 and last['CCI'] < -100:
+                    signal_type = "SNIPER_BUY"
+                elif last_price > last['EMA_200'] and last['RSI'] > 65 and last['CCI'] > 100:
+                    signal_type = "SNIPER_SELL"
+
+                # 4️⃣ استراتيجية: اختراق الزخم (MOMENTUM BREAKOUT)
+                elif last['Close'] > prev['High'] and last['CCI'] > 150:
+                    signal_type = "MOMENTUM_BUY"
+                elif last['Close'] < prev['Low'] and last['CCI'] < -150:
+                    signal_type = "MOMENTUM_SELL"
+
+                if signal_type:
+                    send_signal(name, last_price, signal_type)
+                
+                time.sleep(5) # حماية من الحظر
+            except:
+                continue
         
-        time.sleep(120) # فحص كل دقيقتين
+        time.sleep(300) # انتظار 5 دقائق للدورة التالية
 
 def send_signal(name, price, s_type):
-    # تنسيق الرسالة
-    emoji = "🚀" if "BUY" in s_type else "📉"
-    msg = f"✨ **إشارة جديدة مكتشفة!**\n\n💎 الزوج: `{name}`\n📈 النوع: `{s_type}`\n💵 السعر: `{price}`\n\n{emoji} القرار: {'شراء' if 'BUY' in s_type else 'بيع'}"
+    # إعداد الرموز بناءً على نوع الاستراتيجية (ثابتة)
+    if "GOLDEN" in s_type:
+        header = "💠💠💠💠 【 فـرصـة ذهـبـيـة 】 💠💠💠💠"
+    elif "SNIPER" in s_type:
+        header = "🎯🎯🎯🎯 【 إشـارة الـقـنـاص 】 🎯🎯🎯🎯"
+    elif "MOMENTUM" in s_type:
+        header = "🔥🔥🔥🔥 【 اخـتـراق الـزخـم 】 🔥🔥🔥🔥"
+    else:
+        header = "🔹🔹🔹🔹 【 فـرصـة قـويـة 】 🔹🔹🔹🔹"
+
+    # تخصيص الأسهم والألوان بناءً على الاتجاه (الطلب الجديد)
+    if "BUY" in s_type:
+        dir_text = "🟢 شـراء | CALL 🟢"
+        emoji_arrow = "⬆️⬆️" # سهم صعود أخضر
+        emoji_icon = "🚀🚀"
+    else:
+        dir_text = "🔴 بـيـع | PUT 🔴"
+        emoji_arrow = "⬇️⬇️" # سهم هبوط أحمر
+        emoji_icon = "📉📉"
+
+    # تنسيق الرسالة النهائي بلمسة هندسية
+    msg = f"{header}\n━━━━━━━━━━━━━━━━━━\n" \
+          f"💎 الزوج: `{name}`\n" \
+          f"📊 النوع: `{s_type.split('_')[0]}`\n" \
+          f"{emoji_arrow} الاتجاه: `{dir_text}`\n" \
+          f"💵 السعر: `{price}`\n" \
+          f"━━━━━━━━━━━━━━━━━━\n" \
+          f"⏱️ الفريم: `1 فريم (5 دقائق)` \n" \
+          f"⏳ المدة: `5 دقائق` \n" \
+          f"🕒 الوقت: `{datetime.now().strftime('%H:%M:%S')}`\n" \
+          f"━━━━━━━━━━━━━━━━━━\n" \
+          f"{emoji_icon} القرار: `{emoji_arrow} ادخل الصفقة الآن {emoji_arrow}`\n" \
+          f"🚫 يرجى التداول بمسؤولية 🚫"
+    
     try:
         bot.send_message(CHAT_ID, msg, parse_mode="Markdown")
-    except: pass
+    except:
+        pass
 
 @app.route('/')
-def home(): return "الرادار يعمل!"
+def home(): return "الرادار المطور يعمل بنجاح! تم إضافة الأسهم الملونة والتفاصيل الدقيقة."
 
 if __name__ == "__main__":
     threading.Thread(target=analyze_market, daemon=True).start()
