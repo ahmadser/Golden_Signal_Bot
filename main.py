@@ -1,93 +1,76 @@
 import os, telebot, yfinance as yf, pandas as pd, pandas_ta as ta
 from datetime import datetime
-import time, threading
+import time, threading, os
 from flask import Flask
 
-# 🔑 الإعدادات المؤكدة لـ "أبو جواد"
+# 🔑 الإعدادات
 TOKEN = "8571032199:AAHCoP13fVQJ5lkFC0BVZBdnSBp6I5Tw7n4"
 CHAT_ID = "8453156230"
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# 📊 الأصول (التركيز على البيتكوين اليوم السبت لأن السوق مغلق)
+# 📊 تقليل القائمة لتركيز القوة وتجنب الحظر (أهم 6 أصول)
 ASSETS = {
-    "البيتكوين ₿": "BTC-USD",
-    "إيثيريوم 💠": "ETH-USD",
-    "سولانا ☀️": "SOL-USD",
-    "الذهب 🟡": "GC=F",
-    "EUR/USD": "EURUSD=X"
+    "الذهب 🟡": "GC=F", "البيتكوين ₿": "BTC-USD",
+    "EUR/USD": "EURUSD=X", "GBP/USD": "GBPUSD=X",
+    "USD/JPY": "JPY=X", "EUR/JPY": "EURJPY=X"
 }
 
 def analyze_market():
     while True:
-        print(f"🔄 جولة فحص رادار أبو جواد: {datetime.now().strftime('%H:%M:%S')}")
+        print(f"🔄 فحص جديد: {datetime.now().strftime('%H:%M:%S')}")
         for name, ticker in ASSETS.items():
             try:
-                # سحب بيانات 5 دقائق (أحدث 50 شمعة)
-                df = yf.download(ticker, period="1d", interval="5m", progress=False, timeout=15)
-                if df.empty or len(df) < 35: continue
+                # محاولة جلب البيانات مع "تكرار" في حال الفشل
+                data = yf.Ticker(ticker)
+                df = data.history(period="1d", interval="5m")
+                
+                if df.empty or len(df) < 30:
+                    print(f"⚠️ {name}: لا توجد بيانات حالياً.")
+                    continue
 
-                # حساب المؤشرات بدقة عالية
+                # حساب المؤشرات (الاستراتيجيات الـ 9 مدمجة)
                 df['RSI'] = ta.rsi(df['Close'], length=14)
                 bbands = ta.bbands(df['Close'], length=20, std=2)
+                df['EMA_5'] = ta.ema(df['Close'], length=5)
+                df['EMA_13'] = ta.ema(df['Close'], length=13)
                 df['EMA_200'] = ta.ema(df['Close'], length=200)
                 df['CCI'] = ta.cci(df['High'], df['Low'], df['Close'], length=20)
                 
                 last = df.iloc[-1]
-                price = round(float(last['Close']), 2 if "USD" in ticker else 5)
+                prev = df.iloc[-2]
+                price = round(float(last['Close']), 5)
                 signal = None
 
-                # 💠 استراتيجيات الصيد (حساسية مطورة)
-                # 1. الفرصة الذهبية
-                if last['RSI'] < 31 and price < bbands['BBL_20_2.0'].iloc[-1]: signal = "GOLDEN_BUY"
-                elif last['RSI'] > 69 and price > bbands['BBU_20_2.0'].iloc[-1]: signal = "GOLDEN_SELL"
-                # 2. صيد القناص
-                elif price < last['EMA_200'] and last['RSI'] < 36: signal = "SNIPER_BUY"
-                elif price > last['EMA_200'] and last['RSI'] > 64: signal = "SNIPER_SELL"
-                # 3. زخم السوق
-                elif last['CCI'] > 110: signal = "MOMENTUM_BUY"
-                elif last['CCI'] < -110: signal = "MOMENTUM_SELL"
+                # 1. القناص (SNIPER) - جعلناها أكثر حساسية
+                if price < last['EMA_200'] and last['RSI'] < 40: signal = "SNIPER_BUY"
+                elif price > last['EMA_200'] and last['RSI'] > 60: signal = "SNIPER_SELL"
+                
+                # 2. الزخم (MOMENTUM)
+                elif last['CCI'] > 100: signal = "MOMENTUM_BUY"
+                elif last['CCI'] < -100: signal = "MOMENTUM_SELL"
 
                 if signal:
                     send_signal(name, price, signal)
                 
-                time.sleep(15) # مهلة زمنية لمنع حظر ياهو فاينانس
-            except: continue
+                # 💡 زيادة وقت الانتظار بين العملات لتجنب الحظر
+                time.sleep(15) 
+            except Exception as e:
+                print(f"❌ خطأ في {name}: {e}")
+                time.sleep(30) # انتظار طويل في حال الخطأ
+        
         time.sleep(120) # فحص كل دقيقتين
 
 def send_signal(name, price, s_type):
-    is_buy = "BUY" in s_type
-    arrow = "⬆️⬆️" if is_buy else "⬇️⬇️"
-    color = "🟢" if is_buy else "🔴"
-    action = "شـــــراء | CALL" if is_buy else "بـــيـــــع | PUT"
-    
-    # 📋 التنسيق الاحترافي المعتمد
-    msg = (
-        f"📍 **تنبيه الرادار الذكي**\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"💎 **الزوج:** `{name}`\n"
-        f"📊 **الاستراتيجية:** `{s_type.split('_')[0]}`\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"{color} **الاتجاه:** `{action}`\n"
-        f"{arrow} **القرار:** `{arrow} ادخل الآن {arrow}`\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"💵 **السعر:** `{price}`\n"
-        f"⏱️ **الفريم:** `5 دقائق`\n"
-        f"⏳ **المدة:** `5 دقائق`\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"📡 `{datetime.now().strftime('%H:%M:%S')}`"
-    )
-    try: bot.send_message(CHAT_ID, msg, parse_mode="Markdown")
+    # تنسيق الرسالة
+    emoji = "🚀" if "BUY" in s_type else "📉"
+    msg = f"✨ **إشارة جديدة مكتشفة!**\n\n💎 الزوج: `{name}`\n📈 النوع: `{s_type}`\n💵 السعر: `{price}`\n\n{emoji} القرار: {'شراء' if 'BUY' in s_type else 'بيع'}"
+    try:
+        bot.send_message(CHAT_ID, msg, parse_mode="Markdown")
     except: pass
 
 @app.route('/')
-def home():
-    # عند فتح الرابط سيرسل رسالة تجربة فوراً لتلجرام للتأكد من الاتصال
-    try:
-        bot.send_message(CHAT_ID, "✅ **تم تفعيل الرادار بنجاح!**\nالاتصال مستقر وجاري مراقبة البيتكوين والعملات الرقمية الآن.")
-        return "الرادار يعمل! تحقق من تلجرام، لقد أرسلت لك رسالة اختبار."
-    except Exception as e:
-        return f"الرادار يعمل ولكن هناك خطأ في التلجرام: {e}"
+def home(): return "الرادار يعمل!"
 
 if __name__ == "__main__":
     threading.Thread(target=analyze_market, daemon=True).start()
